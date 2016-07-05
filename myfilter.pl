@@ -1,4 +1,17 @@
 #!/usr/bin/perl
+
+# 过滤Mysqlbinlog中指定库的特定表
+# 只测试了row格式的binlog
+#
+# 第一步(导出指定库的所有日志）：
+# mysqlbinlog -d db1 -v binlog.000001 > db1.sql
+# mysqlbinlog -d db1 -v --start-datetime='xxxxx' --stop-datetime='xxxxx' binlog.000001 > db1.sql
+# mysqlbinlog -d db1 -v --start-position='xxxxx' --stop-position='xxxxx' binlog.000001 > db1.sql
+#
+# 第二步：用本脚本过滤
+# perl myfilter.pl --tables tbl1,tbl2 --src db1.sql
+
+# 基于https://github.com/sillydong/MySQL_Binlog_Table_Filter
 # MySQL_Binlog_Table_Filter
 # By Chen.Zhidong
 # njutczd+gmail.com
@@ -67,15 +80,51 @@ my $block="";
 my $line="";
 my $end_log_pos=0;
 my $matchfilter=0;
+my $delimiter="";
+
+
+my $lineNum = 0;
 
 while($line=<FILE>)
 {
+    $lineNum++;
+
 	if($line ne "")
 	{
-		if($line =~ /^\/\*/)
+        if ($lineNum == 1 && $line !~ /PSEUDO_SLAVE_MODE/){
+            print "Only support Row format binlog.";
+            exit;
+        }
+
+        if ($lineNum <= 13){
+            print $line;
+            next;
+        }
+        elsif ($lineNum == 14){
+            print "\n\n";
+        }
+
+		if($line =~ /^\/\*/ && $matchfilter)
 		{
+            $block.=$line;
 			#do nothing
 		}
+		elsif($line =~ /^DELIMITER\s+(.+)/i)
+		{
+            $delimiter=$1;
+            #$block.=$line;
+            #print $line;
+		}
+        elsif($line =~ /^#\d+.+end_log_pos (\d+).+Table_map: `[\w_]+`\.`?([\w_]+)`?.+/i)
+        {
+            #table_map
+			$end_log_pos=$1;
+            if ($2 ~~ @tables)
+            {
+                $block.=$line;
+                $matchfilter=1;
+            }
+        }
 		elsif($line =~ /^#\d+.+end_log_pos (\d+) .*/)
 		{
 			#determin end_log_pos
@@ -87,17 +136,18 @@ while($line=<FILE>)
 			if($end_log_pos == $1 && $matchfilter)
 			{
 				#meet end_log_pos and print if table matches
-				$block.=$line;
+                #$block.=$line;
 				print $block;
 			}
 			#clean variables
-			$block="";
+            #$block="";
+            $block="\n\n" . $line;
 			$end_log_pos=0;
 			$matchfilter=0;
 		}
 		else
 		{
-			if($line =~ /^ *update ([a-z_]+) .+/i)
+            if($line =~ /^[ #]*update `[\w_]+`\.`?([\w_]+)`?.*/i)
 			{
 				#update
 				if ($1 ~~ @tables)
@@ -106,7 +156,7 @@ while($line=<FILE>)
 					$matchfilter=1;
 				}
 			}
-			elsif($line =~ /^ *insert into `?([a-z_]+)`? .+/i)
+			elsif($line =~ /^[ #]*insert into `[\w_]+`\.`?([\w_]+)`?.*/i)
 			{
 				#insert
 				if ($1 ~~ @tables)
@@ -115,7 +165,7 @@ while($line=<FILE>)
 					$matchfilter=1;
 				}
 			}
-			elsif($line =~ /^ *delete from `?([a-z_]+)`? .+/i)
+			elsif($line =~ /^[ #]*delete from `[\w_]+`\.`?([\w_]+)`?.*/i)
 			{
 				#delete
 				if ($1 ~~ @tables)
@@ -124,7 +174,25 @@ while($line=<FILE>)
 					$matchfilter=1;
 				}
 			}
-			elsif($opt{'enable-drop'} && $line =~ /^ *drop table `?([a-z_]+)`?.*/i)
+			elsif($line =~ /^ *create table (`[\w_]+`\.)?`?([\w_]+)`?.*/i)
+			{
+				#create table
+				if ($2 ~~ @tables)
+				{
+					$block.=$line;
+					$matchfilter=1;
+				}
+			}
+			elsif($line =~ /^ *alter table (`[\w_]+`\.)?`?([\w_]+)`?.*/i)
+			{
+				#alter
+				if ($2 ~~ @tables)
+				{
+					$block.=$line;
+					$matchfilter=1;
+				}
+			}
+			elsif($opt{'enable-drop'} && $line =~ /^ *drop table `?([\w_]+)`?.+/i)
 			{
 				#drop
 				if ($1 ~~ @tables)
@@ -142,25 +210,7 @@ while($line=<FILE>)
 					$matchfilter=1;
 				}
 			}
-			elsif($line =~ /^ *alter table `?([a-z_]+)`? .+/i)
-			{
-				#alter
-				if ($1 ~~ @tables)
-				{
-					$block.=$line;
-					$matchfilter=1;
-				}
-			}
-			elsif($line =~ /^ *create table `?([a-z_]+)`? .+/)
-			{
-				#create table
-				if ($1 ~~ @tables)
-				{
-					$block.=$line;
-					$matchfilter=1;
-				}
-			}
-			elsif($line =~ /^ *create (unique index|index) .+ on `?([a-z_]+)`? .+/i)
+			elsif($line =~ /^ *create .*index .+ on `?([a-z_]+)`? .+/i)
 			{
 				#create index
 				if ($1 ~~ @tables)
