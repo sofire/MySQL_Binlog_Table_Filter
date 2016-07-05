@@ -1,7 +1,9 @@
 #!/usr/bin/perl
 
 # 过滤Mysqlbinlog中指定库的特定表
-# 只测试了row格式的binlog
+# Modify By sofire @ 2016.07.05
+
+# WARN：Just For Test。请在测试环境中使用。未做充分的测试（只测试了row格式的binlog，而且只对部分SQL语句做了判断），
 #
 # 第一步(导出指定库的所有日志）：
 # mysqlbinlog -d db1 -v binlog.000001 > db1.sql
@@ -32,7 +34,7 @@
 use strict;
 use Getopt::Long;
 
-my $version = "1.0";
+my $version = "1.1";
 
 my %opt = (
 		"tables"=>"",
